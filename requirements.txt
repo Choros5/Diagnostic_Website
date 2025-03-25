@@ -1,8 +1,7 @@
 Flask==3.1.0
 gunicorn==23.0.0
-torch==2.6.0
-torchvision==0.21.0
+torch==2.6.0+cpu
 pillow==11.1.0
-opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
 numpy==2.2.4
 firebase-admin==6.7.0
