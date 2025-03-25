@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify, render_template, send_from_directory,
 import os
 import torch
 import torch.nn as nn
-from torchvision import models, transforms
 from PIL import Image
 import logging
 import cv2
@@ -38,6 +37,80 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
+# Manual ResNet50 definition
+class ResNet50(nn.Module):
+    def __init__(self, num_classes=2):
+        super(ResNet50, self).__init__()
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        self.layer1 = self._make_layer(64, 64, 3)
+        self.layer2 = self._make_layer(256, 128, 4, stride=2)
+        self.layer3 = self._make_layer(512, 256, 6, stride=2)
+        self.layer4 = self._make_layer(1024, 512, 3, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Sequential(
+            nn.Linear(2048, num_classes),
+            nn.Softmax(dim=1)
+        )
+
+    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
+        layers = []
+        layers.append(Bottleneck(in_channels, out_channels, stride))
+        for _ in range(1, blocks):
+            layers.append(Bottleneck(out_channels * 4, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
+class Bottleneck(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(out_channels, out_channels * 4, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels * 4)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = None
+        if stride != 1 or in_channels != out_channels * 4:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels * 4, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels * 4)
+            )
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+        out = self.conv3(out)
+        out = self.bn3(out)
+        if self.downsample is not None:
+            identity = self.downsample(x)
+        out += identity
+        out = self.relu(out)
+        return out
+
 # Model paths
 xray_models = {
     'pneumonia': "models/Pneumonia.pth",
@@ -50,14 +123,9 @@ class_names = {
     'tuberculosis': ['Normal', 'Tuberculosis'],
 }
 
-# Load ResNet model (lazy-loaded in /analyze)
+# Load ResNet model
 def load_resnet_model(model_path, num_classes):
-    model = models.resnet50(pretrained=False)
-    num_features = model.fc.in_features
-    model.fc = nn.Sequential(
-        nn.Linear(num_features, num_classes),
-        nn.Softmax(dim=1)
-    )
+    model = ResNet50(num_classes)
     if os.path.exists(model_path):
         try:
             state_dict = torch.load(model_path, map_location=device)
@@ -202,7 +270,6 @@ def analyze():
         logger.error(f"Error in analyze: {str(e)}")
         return jsonify({'message': f"<p><strong>Error:</strong> Server error: {str(e)}</p>"})
 
-# Health check to ensure Gunicorn binds quickly
 @app.route('/health')
 def health():
     return "OK", 200
@@ -210,3 +277,27 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
+
+# Define transforms at the end
+import torch.nn.functional as F
+class transforms:
+    class Compose:
+        def __init__(self, transforms):
+            self.transforms = transforms
+        def __call__(self, img):
+            for t in self.transforms:
+                img = t(img)
+            return img
+    class Resize:
+        def __init__(self, size):
+            self.size = size
+        def __call__(self, img):
+            return img.resize(self.size, Image.BILINEAR)
+    class Grayscale:
+        def __init__(self, num_output_channels):
+            self.num_output_channels = num_output_channels
+        def __call__(self, img):
+            return img.convert('L').convert('RGB') if self.num_output_channels == 3 else img.convert('L')
+    class ToTensor:
+        def __call__(self, img):
+            return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
