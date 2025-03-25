@@ -14,6 +14,29 @@ import json
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'
 
+# Define transforms first
+class transforms:
+    class Compose:
+        def __init__(self, transforms):
+            self.transforms = transforms
+        def __call__(self, img):
+            for t in self.transforms:
+                img = t(img)
+            return img
+    class Resize:
+        def __init__(self, size):
+            self.size = size
+        def __call__(self, img):
+            return img.resize(self.size, Image.BILINEAR)
+    class Grayscale:
+        def __init__(self, num_output_channels):
+            self.num_output_channels = num_output_channels
+        def __call__(self, img):
+            return img.convert('L').convert('RGB') if self.num_output_channels == 3 else img.convert('L')
+    class ToTensor:
+        def __call__(self, img):
+            return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
+
 # Initialize Firebase
 firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
 if not firebase_creds_json:
@@ -277,27 +300,3 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
-
-# Define transforms at the end
-import torch.nn.functional as F
-class transforms:
-    class Compose:
-        def __init__(self, transforms):
-            self.transforms = transforms
-        def __call__(self, img):
-            for t in self.transforms:
-                img = t(img)
-            return img
-    class Resize:
-        def __init__(self, size):
-            self.size = size
-        def __call__(self, img):
-            return img.resize(self.size, Image.BILINEAR)
-    class Grayscale:
-        def __init__(self, num_output_channels):
-            self.num_output_channels = num_output_channels
-        def __call__(self, img):
-            return img.convert('L').convert('RGB') if self.num_output_channels == 3 else img.convert('L')
-    class ToTensor:
-        def __call__(self, img):
-            return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
