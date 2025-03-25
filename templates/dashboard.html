@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Dashboard for Early Detection & Diagnosis System by ATG">
+    <meta name="keywords" content="AI, healthcare, dashboard, African Technology Growth, ATG">
+    <meta name="author" content="African Technology Growth">
+    <title>Dashboard - Early Detection System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-container">
+            <div class="header-left">
+                <button class="sidebar-toggle" onclick="toggleSidebar()">☰ Menu</button>
+                <img src="{{ url_for('static', filename='images/atg-logo.png') }}" alt="ATG Logo" class="logo">
+            </div>
+            <h1>Early Detection & Diagnosis System</h1>
+            <nav>
+                <a href="/" class="nav-link">Home</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-content">
+            <h2>Analysis Categories</h2>
+            <div class="category">
+                <h3>X-Ray</h3>
+                <ul class="disease-list">
+                    <li onclick="showSection('xray', 'pneumonia')">Pneumonia</li>
+                    <li onclick="showSection('xray', 'tuberculosis')">Tuberculosis</li>
+                    <li onclick="showSection('xray', 'lung_cancer')">Lung Cancer</li>
+                </ul>
+            </div>
+            <div class="category">
+                <h3>MRI</h3>
+                <ul class="disease-list">
+                    <li onclick="showSection('mri', 'brain_cancer')">Brain Cancer</li>
+                </ul>
+            </div>
+            <div class="category">
+                <h3>CT Scans</h3>
+                <ul class="disease-list">
+                    <li onclick="showSection('ct', 'kidney_cancer')">Kidney Cancer</li>
+                    <li onclick="showSection('ct', 'breast_cancer')">Breast Cancer</li>
+                </ul>
+            </div>
+            <div class="category">
+                <h3>Biopsy</h3>
+                <ul class="disease-list">
+                    <li onclick="showSection('biopsy', 'cervical_cancer')">Cervical Cancer</li>
+                    <li onclick="showSection('biopsy', 'lung_cancer')">Lung Cancer</li>
+                </ul>
+            </div>
+            <div class="category">
+                <h3>Endoscopy</h3>
+                <ul class="disease-list">
+                    <li onclick="showSection('endoscopy', 'esophageal_cancer')">Esophageal Cancer</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="dashboard-header">
+            <h1>Welcome to Your Health Dashboard!</h1>
+            <p>Harness AI for Early Detection Across Multiple Imaging Types</p>
+        </div>
+
+        <div class="model-section" id="xray-pneumonia">
+            <h2>X-Ray - Pneumonia Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="xrayFile-pneumonia" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('xray', 'pneumonia')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="xrayResults-pneumonia">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="xray-tuberculosis">
+            <h2>X-Ray - Tuberculosis Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="xrayFile-tuberculosis" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('xray', 'tuberculosis')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="xrayResults-tuberculosis">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="xray-lung_cancer">
+            <h2>X-Ray - Lung Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="xrayFile-lung_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('xray', 'lung_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="xrayResults-lung_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="mri-brain_cancer">
+            <h2>MRI - Brain Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="mriFile-brain_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('mri', 'brain_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="mriResults-brain_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="ct-kidney_cancer">
+            <h2>CT - Kidney Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="ctFile-kidney_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('ct', 'kidney_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="ctResults-kidney_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="ct-breast_cancer">
+            <h2>CT - Breast Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="ctFile-breast_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('ct', 'breast_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="ctResults-breast_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="biopsy-cervical_cancer">
+            <h2>Biopsy - Cervical Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="biopsyFile-cervical_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('biopsy', 'cervical_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="biopsyResults-cervical_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="biopsy-lung_cancer">
+            <h2>Biopsy - Lung Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="biopsyFile-lung_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('biopsy', 'lung_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="biopsyResults-lung_cancer">Results will appear here...</div>
+        </div>
+
+        <div class="model-section" id="endoscopy-esophageal_cancer">
+            <h2>Endoscopy - Esophageal Cancer Analysis</h2>
+            <div class="upload-area">
+                <div class="upload-group">
+                    <input type="file" id="endoscopyFile-esophageal_cancer" accept="image/*">
+                    <button class="analyze-btn" onclick="analyzeImage('endoscopy', 'esophageal_cancer')">Analyze</button>
+                </div>
+            </div>
+            <div class="results-area" id="endoscopyResults-esophageal_cancer">Results will appear here...</div>
+        </div>
+    </div>
+
+    <footer>
+        <p class="footer-text">At ATG, we fuse technology and transformation through a vibrant array of services—from pioneering AI innovations to empowering education—crafting a smarter, more connected world for all.</p>
+    </footer>
+
+    <script>
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('active');
+        }
+
+        function showSection(type, disease) {
+            document.querySelectorAll('.model-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            document.getElementById(`${type}-${disease}`).classList.add('active');
+            if (window.innerWidth <= 768) {
+                toggleSidebar();
+            }
+        }
+
+        async function analyzeImage(type, disease) {
+            const fileInput = document.getElementById(`${type}File-${disease}`);
+            const resultsDiv = document.getElementById(`${type}Results-${disease}`);
+            const file = fileInput.files[0];
+
+            if (!file) {
+                resultsDiv.innerHTML = "<p><strong>Error:</strong> Please upload an image first!</p>";
+                return;
+            }
+
+            resultsDiv.innerHTML = "<p><strong>Status:</strong> Analyzing...</p>";
+
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('type', type);
+            formData.append('disease', disease);
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.message && result.gradcam_url) {
+                    resultsDiv.innerHTML = `
+                        ${result.message}
+                        <img src="${result.gradcam_url}" alt="Grad-CAM Heatmap" class="gradcam-image">
+                    `;
+                } else {
+                    resultsDiv.innerHTML = result.message || "<p><strong>Error:</strong> Analysis failed.</p>";
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>

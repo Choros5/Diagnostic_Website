@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Account management for Early Detection & Diagnosis System by ATG">
+    <meta name="keywords" content="AI, healthcare, account, African Technology Growth, ATG">
+    <meta name="author" content="African Technology Growth">
+    <title>Account - Early Detection & Diagnosis System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Firebase Compatibility SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-container">
+            <img src="{{ url_for('static', filename='images/atg-logo.png') }}" alt="ATG Logo" class="logo">
+            <h1>Early Detection & Diagnosis System</h1>
+            <nav>
+                <a href="/" class="nav-link">Home</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="account-main">
+        <div class="account-container">
+            <!-- Sign In -->
+            <section class="account-form" id="login-section">
+                <h2>Sign In with Your Login</h2>
+                <p>If you do not already have an account, you can <a href="#" id="create-account-link">create account here</a>.</p>
+                <form id="login-form" action="#">
+                    <div class="form-group">
+                        <label for="login-email">Username (Email):</label>
+                        <input type="email" id="login-email" name="login-email" required>
+                    </div>
+                    <div class="form-group password-group">
+                        <label for="login-password">Password:</label>
+                        <input type="password" id="login-password" name="login-password" required>
+                        <span class="toggle-password" id="toggle-login-password">👁️</span>
+                    </div>
+                    <button type="submit" class="cta-btn">Login</button>
+                </form>
+                <p id="login-error" class="error"></p>
+                <a href="#" id="forgot-password-link">Forgot Password?</a>
+                <!-- Forgot Password -->
+                <div id="forgot-password" class="hidden">
+                    <p>Enter your registered email:</p>
+                    <input type="email" id="forgot-email" name="forgot-email">
+                    <button id="send-reset-code" class="cta-btn">Send Reset Link</button>
+                    <p id="forgot-error" class="error"></p>
+                </div>
+            </section>
+
+            <!-- Create Account (Hidden by Default) -->
+            <section class="account-form hidden" id="create-account-section">
+                <h2>Create Account</h2>
+                <form id="create-form" action="#">
+                    <div class="form-group">
+                        <label for="name">Name:</label>
+                        <input type="text" id="name" name="name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="surname">Surname:</label>
+                        <input type="text" id="surname" name="surname" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                    <div class="form-group password-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password" required>
+                        <span class="toggle-password" id="toggle-create-password">👁️</span>
+                        <div id="password-strength" class="strength-bar"></div>
+                        <p class="hint">At least 5 numbers, uppercase, lowercase, and special characters (@-_).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-password">Confirm Password:</label>
+                        <input type="password" id="confirm-password" name="confirm-password" required>
+                    </div>
+                    <button type="submit" class="cta-btn">Create Account</button>
+                </form>
+                <p id="create-error" class="error"></p>
+                <div id="verify-section" class="hidden">
+                    <p>A verification link has been sent to your email. Please verify to complete registration.</p>
+                </div>
+                <a href="#" id="back-to-login-link">Back to Sign In</a>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <p class="footer-text">At ATG, we fuse technology and transformation through a vibrant array of services—from pioneering AI innovations to empowering education—crafting a smarter, more connected world for all.</p>
+    </footer>
+
+    <!-- Firebase Config and Initialization -->
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBaj0oEelj65fEHESX4F2f2grbvneIY-ho",
+            authDomain: "diagnostic-web-65dbf.firebaseapp.com",
+            projectId: "diagnostic-web-65dbf",
+            storageBucket: "diagnostic-web-65dbf.firebasestorage.app",
+            messagingSenderId: "441504253493",
+            appId: "1:441504253493:web:d723dbae2f6a820dff537c",
+            measurementId: "G-NKSJXKNZ70"
+        };
+        firebase.initializeApp(firebaseConfig);
+        console.log('Firebase initialized successfully');
+    </script>
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>
