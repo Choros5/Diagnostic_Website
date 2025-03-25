@@ -13,9 +13,9 @@ from firebase_admin import credentials, auth
 import json
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Replace with a secure key
+app.secret_key = 'your-secret-key-here'
 
-# Initialize Firebase using environment variable
+# Initialize Firebase
 firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
 if not firebase_creds_json:
     raise ValueError("FIREBASE_CREDENTIALS environment variable not set")
@@ -23,22 +23,34 @@ cred_dict = json.loads(firebase_creds_json)
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 
-# Set up logging
+# Logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Set device
+# Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Using device: {device}")
 
-# Define transformations
+# Transformations
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.Grayscale(num_output_channels=3),
     transforms.ToTensor(),
 ])
 
-# Load ResNet models
+# Model paths
+xray_models = {
+    'pneumonia': "models/Pneumonia.pth",
+    'tuberculosis': "models/Tuberculosis_model.pth",
+}
+
+# Class names
+class_names = {
+    'pneumonia': ['Normal', 'Pneumonia'],
+    'tuberculosis': ['Normal', 'Tuberculosis'],
+}
+
+# Load ResNet model (lazy-loaded in /analyze)
 def load_resnet_model(model_path, num_classes):
     model = models.resnet50(pretrained=False)
     num_features = model.fc.in_features
@@ -49,35 +61,18 @@ def load_resnet_model(model_path, num_classes):
     if os.path.exists(model_path):
         try:
             state_dict = torch.load(model_path, map_location=device)
-            if torch.cuda.device_count() > 1 and next(iter(state_dict)).startswith('module'):
-                state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
             model.load_state_dict(state_dict)
             model = model.to(device)
             model.eval()
             logger.info(f"Loaded ResNet model from {model_path}")
             return model
         except Exception as e:
-            logger.error(f"Failed to load ResNet model from {model_path}: {str(e)}")
+            logger.error(f"Failed to load model from {model_path}: {str(e)}")
             return None
     logger.warning(f"Model file not found: {model_path}")
     return None
 
-# Load models (only pneumonia and tuberculosis)
-xray_models = {
-    'pneumonia': load_resnet_model("models/Pneumonia.pth", 2),
-    'tuberculosis': load_resnet_model("models/Tuberculosis_model.pth", 2),
-}
-
-# Log loaded models
-logger.debug(f"Loaded xray_models: { {k: 'Loaded' if v is not None else 'Not Loaded' for k, v in xray_models.items()} }")
-
-# Class names
-class_names = {
-    'pneumonia': ['Normal', 'Pneumonia'],
-    'tuberculosis': ['Normal', 'Tuberculosis'],
-}
-
-# Grad-CAM for ResNet Models
+# Grad-CAM
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -103,7 +98,7 @@ class GradCAM:
         output.backward(gradient=one_hot.to(device))
         return output
 
-def generate_gradcam(model, image_tensor, preprocess, disease, predicted_class, target_layer):
+def generate_gradcam(model, image_tensor, disease, predicted_class, target_layer):
     grad_cam = GradCAM(model, target_layer)
     target_class = class_names[disease].index(predicted_class)
     output = grad_cam(image_tensor, target_class)
@@ -121,7 +116,6 @@ def generate_gradcam(model, image_tensor, preprocess, disease, predicted_class, 
     if len(img_np.shape) == 3 and img_np.shape[0] == 3:
         img_np = np.transpose(img_np, (1, 2, 0))
     else:
-        logger.error(f"Unexpected image tensor shape: {img_np.shape}")
         raise ValueError(f"Unexpected image tensor shape: {img_np.shape}")
 
     heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
@@ -138,7 +132,7 @@ def generate_gradcam(model, image_tensor, preprocess, disease, predicted_class, 
     cv2.imwrite(gradcam_filename, superimposed_img)
     return gradcam_filename
 
-# Prediction function
+# Prediction
 def predict_resnet_image(model, image, transform, disease):
     image_tensor = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
@@ -190,13 +184,14 @@ def analyze():
             return jsonify({'message': "<p><strong>Error:</strong> Only X-ray scans are supported.</p>"})
 
         if disease not in ['pneumonia', 'tuberculosis']:
-            return jsonify({'message': f"<p><strong>Error:</strong> Only pneumonia and tuberculosis analysis are supported.</p>"})
+            return jsonify({'message': "<p><strong>Error:</strong> Only pneumonia and tuberculosis analysis are supported.</p>"})
 
         img = Image.open(image)
-        model = xray_models.get(disease)
+        model_path = xray_models.get(disease)
+        model = load_resnet_model(model_path, 2)
         if model:
             predicted_class, probability, image_tensor = predict_resnet_image(model, img, transform, disease)
-            gradcam_path = generate_gradcam(model, image_tensor, transform, disease, predicted_class, 'layer4')
+            gradcam_path = generate_gradcam(model, image_tensor, disease, predicted_class, 'layer4')
             message = f"<p><strong>Predicted Condition:</strong> {predicted_class}</p><p><strong>Confidence:</strong> {probability:.4f}</p>"
             return jsonify({'message': message, 'gradcam_url': f"/{gradcam_path}"})
         else:
@@ -207,7 +202,11 @@ def analyze():
         logger.error(f"Error in analyze: {str(e)}")
         return jsonify({'message': f"<p><strong>Error:</strong> Server error: {str(e)}</p>"})
 
+# Health check to ensure Gunicorn binds quickly
+@app.route('/health')
+def health():
+    return "OK", 200
+
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
