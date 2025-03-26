@@ -8,15 +8,190 @@
     <meta name="author" content="African Technology Growth">
     <title>Dashboard - Early Detection System</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        body {
+            background: linear-gradient(135deg, #f4f7f9 0%, #e0e7ef 100%);
+            min-height: 100vh;
+            color: #020202;
+            font-family: 'Montserrat', sans-serif;
+        }
+
+        .dashboard-container {
+            max-width: 1400px;
+            margin: 4rem auto;
+            padding: 0 2rem;
+        }
+
+        .dashboard-header {
+            text-align: center;
+            padding: 2rem 0;
+            animation: fadeIn 1s ease-in;
+        }
+
+        .dashboard-header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #216e89;
+            margin-bottom: 0.5rem;
+        }
+
+        .dashboard-header p {
+            font-size: 1.2rem;
+            font-weight: 300;
+            color: #f88f09;
+        }
+
+        .models {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            justify-content: center;
+            margin: 2rem 0;
+            animation: slideUp 1s ease-in;
+        }
+
+        .model-section {
+            flex: 1;
+            min-width: 300px;
+            max-width: 350px;
+            background: #fefefe;
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .model-section:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .model-section h2 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #216e89;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .upload-area {
+            padding: 1.5rem;
+            background: #f4f7f9;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .upload-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        select, input[type="file"] {
+            width: 100%;
+            padding: 0.8rem;
+            border: 1px solid #216e89;
+            border-radius: 5px;
+            font-size: 1rem;
+            font-weight: 400;
+            background: #fefefe;
+        }
+
+        .analyze-btn {
+            width: 100%;
+            padding: 0.8rem;
+            background: #f88f09;
+            color: #fefefe;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.2s;
+        }
+
+        .analyze-btn:hover {
+            background: #ffaa33;
+            transform: scale(1.02);
+        }
+
+        .analyze-btn:active {
+            transform: scale(0.98);
+        }
+
+        .results-area {
+            margin-top: 1.5rem;
+            padding: 1.5rem;
+            background: #f4f7f9;
+            border-radius: 10px;
+            min-height: 100px;
+            text-align: center;
+            font-size: 1rem;
+        }
+
+        .results-area strong {
+            color: #216e89;
+            font-weight: 700;
+        }
+
+        .results-area p {
+            margin: 0.5rem 0;
+        }
+
+        .gradcam-image {
+            max-width: 100%;
+            height: auto;
+            margin-top: 1rem;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        @media (max-width: 1024px) {
+            .models {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .model-section {
+                max-width: 400px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .dashboard-header h1 {
+                font-size: 1.8rem;
+            }
+
+            .dashboard-header p {
+                font-size: 1rem;
+            }
+
+            .model-section {
+                padding: 1.5rem;
+            }
+
+            .model-section h2 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <header>
         <div class="header-container">
-            <div class="header-left">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">☰ Menu</button>
-                <img src="{{ url_for('static', filename='images/atg-logo.png') }}" alt="ATG Logo" class="logo">
-            </div>
+            <img src="{{ url_for('static', filename='images/atg-logo.png') }}" alt="ATG Logo" class="logo">
             <h1>Early Detection & Diagnosis System</h1>
             <nav>
                 <a href="/" class="nav-link">Home</a>
@@ -24,149 +199,91 @@
         </div>
     </header>
 
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-content">
-            <h2>Analysis Categories</h2>
-            <div class="category">
-                <h3>X-Ray</h3>
-                <ul class="disease-list">
-                    <li onclick="showSection('xray', 'pneumonia')">Pneumonia</li>
-                    <li onclick="showSection('xray', 'tuberculosis')">Tuberculosis</li>
-                    <li onclick="showSection('xray', 'lung_cancer')">Lung Cancer</li>
-                </ul>
-            </div>
-            <div class="category">
-                <h3>MRI</h3>
-                <ul class="disease-list">
-                    <li onclick="showSection('mri', 'brain_cancer')">Brain Cancer</li>
-                </ul>
-            </div>
-            <div class="category">
-                <h3>CT Scans</h3>
-                <ul class="disease-list">
-                    <li onclick="showSection('ct', 'kidney_cancer')">Kidney Cancer</li>
-                    <li onclick="showSection('ct', 'breast_cancer')">Breast Cancer</li>
-                </ul>
-            </div>
-            <div class="category">
-                <h3>Biopsy</h3>
-                <ul class="disease-list">
-                    <li onclick="showSection('biopsy', 'cervical_cancer')">Cervical Cancer</li>
-                    <li onclick="showSection('biopsy', 'lung_cancer')">Lung Cancer</li>
-                </ul>
-            </div>
-            <div class="category">
-                <h3>Endoscopy</h3>
-                <ul class="disease-list">
-                    <li onclick="showSection('endoscopy', 'esophageal_cancer')">Esophageal Cancer</li>
-                </ul>
-            </div>
-        </div>
-    </div>
-
-    <div class="main-content">
+    <div class="dashboard-container">
         <div class="dashboard-header">
             <h1>Welcome to Your Health Dashboard!</h1>
             <p>Harness AI for Early Detection Across Multiple Imaging Types</p>
         </div>
 
-        <div class="model-section" id="xray-pneumonia">
-            <h2>X-Ray - Pneumonia Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="xrayFile-pneumonia" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('xray', 'pneumonia')">Analyze</button>
+        <div class="models">
+            <div class="model-section" id="xray">
+                <h2>X-Ray Analysis</h2>
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <select id="xrayDisease">
+                            <option value="">Select Disease to Check</option>
+                            <option value="pneumonia">Pneumonia</option>
+                            <option value="tuberculosis">Tuberculosis</option>
+                            <option value="lung_cancer">Lung Cancer</option>
+                        </select>
+                        <input type="file" id="xrayFile" accept="image/*">
+                        <button class="analyze-btn" onclick="analyzeImage('xray')">Analyze</button>
+                    </div>
                 </div>
+                <div class="results-area" id="xrayResults">Results will appear here...</div>
             </div>
-            <div class="results-area" id="xrayResults-pneumonia">Results will appear here...</div>
-        </div>
 
-        <div class="model-section" id="xray-tuberculosis">
-            <h2>X-Ray - Tuberculosis Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="xrayFile-tuberculosis" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('xray', 'tuberculosis')">Analyze</button>
+            <div class="model-section" id="mri">
+                <h2>MRI Analysis</h2>
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <select id="mriDisease">
+                            <option value="">Select Disease to Check</option>
+                            <option value="brain_cancer">Brain Cancer</option>
+                        </select>
+                        <input type="file" id="mriFile" accept="image/*">
+                        <button class="analyze-btn" onclick="analyzeImage('mri')">Analyze</button>
+                    </div>
                 </div>
+                <div class="results-area" id="mriResults">Results will appear here...</div>
             </div>
-            <div class="results-area" id="xrayResults-tuberculosis">Results will appear here...</div>
-        </div>
 
-        <div class="model-section" id="xray-lung_cancer">
-            <h2>X-Ray - Lung Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="xrayFile-lung_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('xray', 'lung_cancer')">Analyze</button>
+            <div class="model-section" id="ct">
+                <h2>CT Scans Analysis</h2>
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <select id="ctDisease">
+                            <option value="">Select Disease to Check</option>
+                            <option value="kidney_cancer">Kidney Cancer</option>
+                            <option value="breast_cancer">Breast Cancer</option>
+                        </select>
+                        <input type="file" id="ctFile" accept="image/*">
+                        <button class="analyze-btn" onclick="analyzeImage('ct')">Analyze</button>
+                    </div>
                 </div>
+                <div class="results-area" id="ctResults">Results will appear here...</div>
             </div>
-            <div class="results-area" id="xrayResults-lung_cancer">Results will appear here...</div>
-        </div>
 
-        <div class="model-section" id="mri-brain_cancer">
-            <h2>MRI - Brain Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="mriFile-brain_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('mri', 'brain_cancer')">Analyze</button>
+            <div class="model-section" id="biopsy">
+                <h2>Biopsy Analysis</h2>
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <select id="biopsyDisease">
+                            <option value="">Select Disease to Check</option>
+                            <option value="cervical_cancer">Cervical Cancer</option>
+                            <option value="lung_cancer">Lung Cancer</option>
+                        </select>
+                        <input type="file" id="biopsyFile" accept="image/*">
+                        <button class="analyze-btn" onclick="analyzeImage('biopsy')">Analyze</button>
+                    </div>
                 </div>
+                <div class="results-area" id="biopsyResults">Results will appear here...</div>
             </div>
-            <div class="results-area" id="mriResults-brain_cancer">Results will appear here...</div>
-        </div>
 
-        <div class="model-section" id="ct-kidney_cancer">
-            <h2>CT - Kidney Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="ctFile-kidney_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('ct', 'kidney_cancer')">Analyze</button>
+            <div class="model-section" id="endoscopy">
+                <h2>Endoscopy Analysis</h2>
+                <div class="upload-area">
+                    <div class="upload-group">
+                        <select id="endoscopyDisease">
+                            <option value="">Select Disease to Check</option>
+                            <option value="esophageal_cancer">Esophageal Cancer</option>
+                        </select>
+                        <input type="file" id="endoscopyFile" accept="image/*">
+                        <button class="analyze-btn" onclick="analyzeImage('endoscopy')">Analyze</button>
+                    </div>
                 </div>
+                <div class="results-area" id="endoscopyResults">Results will appear here...</div>
             </div>
-            <div class="results-area" id="ctResults-kidney_cancer">Results will appear here...</div>
-        </div>
-
-        <div class="model-section" id="ct-breast_cancer">
-            <h2>CT - Breast Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="ctFile-breast_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('ct', 'breast_cancer')">Analyze</button>
-                </div>
-            </div>
-            <div class="results-area" id="ctResults-breast_cancer">Results will appear here...</div>
-        </div>
-
-        <div class="model-section" id="biopsy-cervical_cancer">
-            <h2>Biopsy - Cervical Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="biopsyFile-cervical_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('biopsy', 'cervical_cancer')">Analyze</button>
-                </div>
-            </div>
-            <div class="results-area" id="biopsyResults-cervical_cancer">Results will appear here...</div>
-        </div>
-
-        <div class="model-section" id="biopsy-lung_cancer">
-            <h2>Biopsy - Lung Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="biopsyFile-lung_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('biopsy', 'lung_cancer')">Analyze</button>
-                </div>
-            </div>
-            <div class="results-area" id="biopsyResults-lung_cancer">Results will appear here...</div>
-        </div>
-
-        <div class="model-section" id="endoscopy-esophageal_cancer">
-            <h2>Endoscopy - Esophageal Cancer Analysis</h2>
-            <div class="upload-area">
-                <div class="upload-group">
-                    <input type="file" id="endoscopyFile-esophageal_cancer" accept="image/*">
-                    <button class="analyze-btn" onclick="analyzeImage('endoscopy', 'esophageal_cancer')">Analyze</button>
-                </div>
-            </div>
-            <div class="results-area" id="endoscopyResults-esophageal_cancer">Results will appear here...</div>
         </div>
     </div>
 
@@ -175,27 +292,20 @@
     </footer>
 
     <script>
-        function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('active');
-        }
-
-        function showSection(type, disease) {
-            document.querySelectorAll('.model-section').forEach(section => {
-                section.classList.remove('active');
-            });
-            document.getElementById(`${type}-${disease}`).classList.add('active');
-            if (window.innerWidth <= 768) {
-                toggleSidebar();
-            }
-        }
-
-        async function analyzeImage(type, disease) {
-            const fileInput = document.getElementById(`${type}File-${disease}`);
-            const resultsDiv = document.getElementById(`${type}Results-${disease}`);
+        async function analyzeImage(type) {
+            const fileInput = document.getElementById(`${type}File`);
+            const diseaseSelect = document.getElementById(`${type}Disease`);
+            const resultsDiv = document.getElementById(`${type}Results`);
             const file = fileInput.files[0];
+            const disease = diseaseSelect.value;
 
             if (!file) {
                 resultsDiv.innerHTML = "<p><strong>Error:</strong> Please upload an image first!</p>";
+                return;
+            }
+
+            if (!disease) {
+                resultsDiv.innerHTML = "<p><strong>Error:</strong> Please select a disease to check!</p>";
                 return;
             }
 
