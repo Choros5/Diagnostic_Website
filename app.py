@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 device = torch.device("cpu")  # Render free tier, no GPU
 logger.info(f"Using device: {device}")
 
-# Simplified transforms (match training)
+# Simplified transforms
 class Transforms:
     @staticmethod
     def resize(img): return img.resize((224, 224), Image.BILINEAR)
@@ -54,14 +54,12 @@ s3_client = boto3.client(
     endpoint_url=R2_ENDPOINT
 )
 
-# Check R2 at startup (non-blocking)
 try:
     s3_client.head_bucket(Bucket=R2_BUCKET)
     logger.info(f"Bucket {R2_BUCKET} exists and is accessible")
 except ClientError as e:
     logger.warning(f"Bucket check failed for {R2_BUCKET}: {e} - Proceeding anyway")
 
-# Models and classes
 xray_models = {"pneumonia": "Pneumonia.pth", "tuberculosis": "Tuberculosis_model.pth"}
 class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", "Tuberculosis"]}
 
@@ -73,15 +71,10 @@ def load_model(model_key):
         s3_client.download_file(R2_BUCKET, model_key, local_path)
         logger.debug(f"Downloaded {model_key} from R2")
         
-        # Use torchvision's ResNet50
         model = models.resnet50(weights=None)
         num_features = model.fc.in_features
-        model.fc = nn.Sequential(
-            nn.Linear(num_features, 2),
-            nn.Softmax(dim=1)
-        )
+        model.fc = nn.Sequential(nn.Linear(num_features, 2), nn.Softmax(dim=1))
         
-        # Load state dict, handling potential multi-GPU 'module.' prefix
         state_dict = torch.load(local_path, map_location=device)
         if any(k.startswith('module.') for k in state_dict.keys()):
             state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
@@ -89,23 +82,25 @@ def load_model(model_key):
         model.to(device)
         model.eval()
         os.remove(local_path)
+        logger.debug(f"Loaded and evaluated {model_key}")
         return model
-    except ClientError as e:
-        logger.error(f"R2 error for {model_key}: {e}")
-        return None
     except Exception as e:
         logger.error(f"Model loading error for {model_key}: {e}")
         return None
 
 def predict(model, image, disease):
     tensor = Transforms.apply(image).unsqueeze(0).to(device)
+    logger.debug("Starting prediction")
     with torch.no_grad():
         output = model(tensor)
         _, pred = torch.max(output, 1)
         prob = output[0][pred].item()
+    logger.debug(f"Prediction completed: {class_names[disease][pred.item()]}")
     return class_names[disease][pred.item()], prob, tensor
 
 def generate_gradcam(model, tensor, disease, pred_class):
+    logger.debug("Starting Grad-CAM")
+    model.eval()
     features = None
     gradients = None
     
@@ -129,9 +124,10 @@ def generate_gradcam(model, tensor, disease, pred_class):
     
     cam = torch.relu(cam)
     cam = cam / (cam.max() + 1e-10)
+    logger.debug("Grad-CAM heatmap computed")
+    
     cam = cam.cpu().numpy()
     cam = cv2.resize(cam, (224, 224))
-    
     img_np = (tensor.squeeze().detach().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
     heatmap_color = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
     superimposed = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
@@ -139,9 +135,9 @@ def generate_gradcam(model, tensor, disease, pred_class):
     path = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
     os.makedirs("static/gradcam", exist_ok=True)
     cv2.imwrite(path, superimposed)
+    logger.debug(f"Grad-CAM saved to {path}")
     return path
 
-# Routes
 @app.route('/')
 def home():
     return render_template('index.html')
