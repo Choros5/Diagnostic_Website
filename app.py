@@ -26,20 +26,42 @@ logger.info(f"Using device: {device}")
 # Simplified transforms
 class Transforms:
     @staticmethod
-    def resize(img): return img.resize((224, 224), Image.BILINEAR)
+    def resize(img):
+        try:
+            return img.resize((224, 224), Image.BILINEAR)
+        except Exception as e:
+            logger.error(f"Resize error: {e}")
+            raise
     @staticmethod
-    def grayscale(img): return img.convert('L').convert('RGB')
+    def grayscale(img):
+        try:
+            return img.convert('L').convert('RGB')
+        except Exception as e:
+            logger.error(f"Grayscale error: {e}")
+            raise
     @staticmethod
-    def to_tensor(img): return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
+    def to_tensor(img):
+        try:
+            return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
+        except Exception as e:
+            logger.error(f"To_tensor error: {e}")
+            raise
     @staticmethod
-    def apply(img): return Transforms.to_tensor(Transforms.grayscale(Transforms.resize(img)))
+    def apply(img):
+        return Transforms.to_tensor(Transforms.grayscale(Transforms.resize(img)))
 
 # Firebase setup
 firebase_creds = os.environ.get("FIREBASE_CREDENTIALS")
 if not firebase_creds:
+    logger.error("FIREBASE_CREDENTIALS not set")
     raise ValueError("FIREBASE_CREDENTIALS not set")
-cred = credentials.Certificate(json.loads(firebase_creds))
-firebase_admin.initialize_app(cred)
+try:
+    cred = credentials.Certificate(json.loads(firebase_creds))
+    firebase_admin.initialize_app(cred)
+    logger.info("Firebase initialized")
+except Exception as e:
+    logger.error(f"Firebase init error: {e}")
+    raise
 
 # R2 setup
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
@@ -87,14 +109,18 @@ def load_model(model_key):
         return None
 
 def predict(model, image, disease):
-    tensor = Transforms.apply(image).unsqueeze(0).to(device)
-    logger.debug("Starting prediction")
-    with torch.no_grad():
-        output = model(tensor)
-        _, pred = torch.max(output, 1)
-        prob = output[0][pred].item()
-    logger.debug(f"Prediction completed: {class_names[disease][pred.item()]}")
-    return class_names[disease][pred.item()], prob
+    try:
+        tensor = Transforms.apply(image).unsqueeze(0).to(device)
+        logger.debug("Starting prediction")
+        with torch.no_grad():
+            output = model(tensor)
+            _, pred = torch.max(output, 1)
+            prob = output[0][pred].item()
+        logger.debug(f"Prediction completed: {class_names[disease][pred.item()]}")
+        return class_names[disease][pred.item()], prob
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        raise
 
 @app.route('/')
 def home():
@@ -123,23 +149,34 @@ def login():
         session['uid'] = decoded['uid']
         return jsonify({'success': True, 'redirect': '/dashboard'})
     except Exception as e:
+        logger.error(f"Login error: {e}")
         return jsonify({'success': False, 'message': str(e)}), 401
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        image = request.files['image']
-        scan_type = request.form['type']
-        disease = request.form['disease']
+        image = request.files.get('image')
+        if not image:
+            logger.error("No image provided in request")
+            return jsonify({'message': "<p><strong>Error:</strong> No image provided</p>"}), 400
+        
+        scan_type = request.form.get('type')
+        disease = request.form.get('disease')
         logger.debug(f"Analyze: type={scan_type}, disease={disease}")
 
+        if not scan_type or not disease:
+            logger.error("Missing scan_type or disease in request")
+            return jsonify({'message': "<p><strong>Error:</strong> Missing scan type or disease</p>"}), 400
+
         if scan_type != 'xray' or disease not in xray_models:
-            return jsonify({'message': "<p><strong>Error:</strong> Invalid scan type or disease</p>"})
+            logger.error(f"Invalid scan_type={scan_type} or disease={disease}")
+            return jsonify({'message': "<p><strong>Error:</strong> Invalid scan type or disease</p>"}), 400
 
         img = Image.open(image)
         model = load_model(xray_models[disease])
         if not model:
-            return jsonify({'message': f"<p><strong>Error:</strong> Failed to load {disease} model</p>"})
+            logger.error(f"Model load failed for {disease}")
+            return jsonify({'message': f"<p><strong>Error:</strong> Failed to load {disease} model</p>"}), 500
 
         pred_class, prob = predict(model, img, disease)
         return jsonify({
@@ -147,7 +184,7 @@ def analyze():
         })
     except Exception as e:
         logger.error(f"Analyze error: {e}")
-        return jsonify({'message': f"<p><strong>Error:</strong> {e}</p>"})
+        return jsonify({'message': f"<p><strong>Error:</strong> {e}</p>"}), 500
 
 @app.route('/health')
 def health():
@@ -160,6 +197,7 @@ def debug_r2():
         buckets = [bucket['Name'] for bucket in response.get('Buckets', [])]
         return jsonify({'buckets': buckets, 'endpoint': R2_ENDPOINT})
     except ClientError as e:
+        logger.error(f"R2 debug error: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
