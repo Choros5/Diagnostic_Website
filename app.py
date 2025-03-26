@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory,
 import os
 import torch
 import torch.nn as nn
+from torchvision import models
 from PIL import Image
 import logging
 import cv2
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 device = torch.device("cpu")  # Render free tier, no GPU
 logger.info(f"Using device: {device}")
 
-# Simplified transforms
+# Simplified transforms (match training)
 class Transforms:
     @staticmethod
     def resize(img): return img.resize((224, 224), Image.BILINEAR)
@@ -60,57 +61,6 @@ try:
 except ClientError as e:
     logger.warning(f"Bucket check failed for {R2_BUCKET}: {e} - Proceeding anyway")
 
-# Simplified ResNet50
-class ResNet50(nn.Module):
-    def __init__(self, num_classes=2):
-        super().__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = nn.Sequential(*[Bottleneck(64, 64) for _ in range(3)])
-        self.layer2 = nn.Sequential(Bottleneck(256, 128, stride=2), *[Bottleneck(512, 128) for _ in range(3)])
-        self.layer3 = nn.Sequential(Bottleneck(512, 256, stride=2), *[Bottleneck(1024, 256) for _ in range(5)])
-        self.layer4 = nn.Sequential(Bottleneck(1024, 512, stride=2), *[Bottleneck(2048, 512) for _ in range(2)])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Sequential(nn.Linear(2048, num_classes), nn.Softmax(dim=1))
-
-    def forward(self, x):
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = self.maxpool(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-        return x
-
-class Bottleneck(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.conv3 = nn.Conv2d(out_channels, out_channels * 4, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(out_channels * 4)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels * 4, kernel_size=1, stride=stride, bias=False),
-            nn.BatchNorm2d(out_channels * 4)
-        ) if stride != 1 or in_channels != out_channels * 4 else None
-
-    def forward(self, x):
-        identity = x
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.relu(self.bn2(self.conv2(out)))
-        out = self.bn3(self.conv3(out))
-        if self.downsample:
-            identity = self.downsample(x)
-        return self.relu(out + identity)
-
 # Models and classes
 xray_models = {"pneumonia": "Pneumonia.pth", "tuberculosis": "Tuberculosis_model.pth"}
 class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", "Tuberculosis"]}
@@ -122,13 +72,29 @@ def load_model(model_key):
         logger.debug(f"Confirmed {model_key} exists in {R2_BUCKET}")
         s3_client.download_file(R2_BUCKET, model_key, local_path)
         logger.debug(f"Downloaded {model_key} from R2")
-        model = ResNet50().to(device)
-        model.load_state_dict(torch.load(local_path, map_location=device))
+        
+        # Use torchvision's ResNet50
+        model = models.resnet50(weights=None)
+        num_features = model.fc.in_features
+        model.fc = nn.Sequential(
+            nn.Linear(num_features, 2),
+            nn.Softmax(dim=1)
+        )
+        
+        # Load state dict, handling potential multi-GPU 'module.' prefix
+        state_dict = torch.load(local_path, map_location=device)
+        if any(k.startswith('module.') for k in state_dict.keys()):
+            state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
+        model.to(device)
         model.eval()
         os.remove(local_path)
         return model
     except ClientError as e:
         logger.error(f"R2 error for {model_key}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Model loading error for {model_key}: {e}")
         return None
 
 def predict(model, image, disease):
@@ -141,18 +107,35 @@ def predict(model, image, disease):
 
 def generate_gradcam(model, tensor, disease, pred_class):
     features = None
-    def hook(module, input, output): nonlocal features; features = output
-    handle = model.layer4.register_forward_hook(hook)
+    gradients = None
+    
+    def save_features(module, input, output): nonlocal features; features = output
+    def save_gradients(module, grad_in, grad_out): nonlocal gradients; gradients = grad_out[0]
+    
+    target_layer = model.layer4
+    target_layer.register_forward_hook(save_features)
+    target_layer.register_backward_hook(save_gradients)
+    
+    tensor.requires_grad = True
     output = model(tensor)
-    handle.remove()
     score = output[0, class_names[disease].index(pred_class)]
-    grads = torch.autograd.grad(score, features)[0]
-    heatmap = torch.mean(features * torch.mean(grads, dim=[2, 3], keepdim=True), dim=1).squeeze().cpu().numpy()
-    heatmap = np.maximum(heatmap, 0) / (np.max(heatmap) + 1e-10)
-    img_np = (tensor.squeeze().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-    heatmap = cv2.resize(np.uint8(255 * heatmap), (224, 224))
-    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    model.zero_grad()
+    score.backward()
+    
+    weights = torch.mean(gradients, dim=[2, 3])[0]
+    cam = torch.zeros(tensor.shape[2:], dtype=torch.float32).to(device)
+    for i, w in enumerate(weights):
+        cam += w * features[0, i]
+    
+    cam = torch.relu(cam)
+    cam = cam / (cam.max() + 1e-10)
+    cam = cam.cpu().numpy()
+    cam = cv2.resize(cam, (224, 224))
+    
+    img_np = (tensor.squeeze().detach().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+    heatmap_color = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
     superimposed = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
+    
     path = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
     os.makedirs("static/gradcam", exist_ok=True)
     cv2.imwrite(path, superimposed)
