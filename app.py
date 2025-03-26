@@ -9,112 +9,65 @@ import numpy as np
 import uuid
 import firebase_admin
 from firebase_admin import credentials, auth
-import json
-import gc
 import boto3
-from botocore.client import Config
 from botocore.exceptions import ClientError
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'
-
-# Define transforms
-class transforms:
-    class Compose:
-        def __init__(self, transforms):
-            self.transforms = transforms
-        def __call__(self, img):
-            for t in self.transforms:
-                img = t(img)
-            return img
-    class Resize:
-        def __init__(self, size):
-            self.size = size
-        def __call__(self, img):
-            return img.resize(self.size, Image.BILINEAR)
-    class Grayscale:
-        def __init__(self, num_output_channels):
-            self.num_output_channels = num_output_channels
-        def __call__(self, img):
-            return img.convert('L').convert('RGB') if self.num_output_channels == 3 else img.convert('L')
-    class ToTensor:
-        def __call__(self, img):
-            return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
-
-# Initialize Firebase
-firebase_creds_json = os.environ.get("FIREBASE_CREDENTIALS")
-if not firebase_creds_json:
-    raise ValueError("FIREBASE_CREDENTIALS environment variable not set")
-cred_dict = json.loads(firebase_creds_json)
-cred = credentials.Certificate(cred_dict)
-firebase_admin.initialize_app(cred)
+app.secret_key = os.environ.get("SECRET_KEY", "fallback-secret-key")
 
 # Logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")  # Render free tier, no GPU
 logger.info(f"Using device: {device}")
 
-# Transformations
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.Grayscale(num_output_channels=3),
-    transforms.ToTensor(),
-])
+# Simplified transforms
+class Transforms:
+    @staticmethod
+    def resize(img): return img.resize((224, 224), Image.BILINEAR)
+    @staticmethod
+    def grayscale(img): return img.convert('L').convert('RGB')
+    @staticmethod
+    def to_tensor(img): return torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
+    @staticmethod
+    def apply(img): return Transforms.to_tensor(Transforms.grayscale(Transforms.resize(img)))
 
-# R2 Configuration
-R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
-R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_BUCKET = 'diagnostic-models'
-R2_ENDPOINT = f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com'
+# Firebase setup
+firebase_creds = os.environ.get("FIREBASE_CREDENTIALS")
+if not firebase_creds:
+    raise ValueError("FIREBASE_CREDENTIALS not set")
+cred = credentials.Certificate(json.loads(firebase_creds))
+firebase_admin.initialize_app(cred)
 
-if not all([R2_ACCOUNT_ID, R2_ACCESS_KEY, R2_SECRET_KEY]):
-    raise ValueError("R2 credentials not fully set in environment variables")
-
+# R2 setup
+R2_ENDPOINT = f"https://{os.environ.get('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com"
+R2_BUCKET = "diagnostic-models"
 s3_client = boto3.client(
-    's3',
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
-    endpoint_url=R2_ENDPOINT,
-    config=Config(
-        signature_version='s3v4',
-        retries={'max_attempts': 5, 'mode': 'standard'},
-        s3={'addressing_style': 'path'}
-    )
+    "s3",
+    aws_access_key_id=os.environ.get("R2_ACCESS_KEY"),
+    aws_secret_access_key=os.environ.get("R2_SECRET_KEY"),
+    endpoint_url=R2_ENDPOINT
 )
 
-# Manual ResNet50
+# Simplified ResNet50
 class ResNet50(nn.Module):
     def __init__(self, num_classes=2):
-        super(ResNet50, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(64, 64, 3)
-        self.layer2 = self._make_layer(256, 128, 4, stride=2)
-        self.layer3 = self._make_layer(512, 256, 6, stride=2)
-        self.layer4 = self._make_layer(1024, 512, 3, stride=2)
+        self.layer1 = nn.Sequential(*[Bottleneck(64, 64) for _ in range(3)])
+        self.layer2 = nn.Sequential(Bottleneck(256, 128, stride=2), *[Bottleneck(512, 128) for _ in range(3)])
+        self.layer3 = nn.Sequential(Bottleneck(512, 256, stride=2), *[Bottleneck(1024, 256) for _ in range(5)])
+        self.layer4 = nn.Sequential(Bottleneck(1024, 512, stride=2), *[Bottleneck(2048, 512) for _ in range(2)])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Sequential(
-            nn.Linear(2048, num_classes),
-            nn.Softmax(dim=1)
-        )
-
-    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
-        layers = []
-        layers.append(Bottleneck(in_channels, out_channels, stride))
-        for _ in range(1, blocks):
-            layers.append(Bottleneck(out_channels * 4, out_channels))
-        return nn.Sequential(*layers)
+        self.fc = nn.Sequential(nn.Linear(2048, num_classes), nn.Softmax(dim=1))
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+        x = self.relu(self.bn1(self.conv1(x)))
         x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -127,7 +80,7 @@ class ResNet50(nn.Module):
 
 class Bottleneck(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
-        super(Bottleneck, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -135,112 +88,64 @@ class Bottleneck(nn.Module):
         self.conv3 = nn.Conv2d(out_channels, out_channels * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channels * 4)
         self.relu = nn.ReLU(inplace=True)
-        self.downsample = None
-        if stride != 1 or in_channels != out_channels * 4:
-            self.downsample = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels * 4, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels * 4)
-            )
+        self.downsample = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels * 4, kernel_size=1, stride=stride, bias=False),
+            nn.BatchNorm2d(out_channels * 4)
+        ) if stride != 1 or in_channels != out_channels * 4 else None
 
     def forward(self, x):
         identity = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-        out = self.conv3(out)
-        out = self.bn3(out)
-        if self.downsample is not None:
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        if self.downsample:
             identity = self.downsample(x)
-        out += identity
-        out = self.relu(out)
-        return out
+        return self.relu(out + identity)
 
-# Model paths in R2
-xray_models = {
-    'pneumonia': 'Pneumonia.pth',
-    'tuberculosis': 'Tuberculosis_model.pth',
-}
+# Models and classes
+xray_models = {"pneumonia": "Pneumonia.pth", "tuberculosis": "Tuberculosis_model.pth"}
+class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", "Tuberculosis"]}
 
-# Class names
-class_names = {
-    'pneumonia': ['Normal', 'Pneumonia'],
-    'tuberculosis': ['Normal', 'Tuberculosis'],
-}
-
-# Load ResNet model from R2
-def load_resnet_model(model_key, num_classes):
-    model = ResNet50(num_classes)
+def load_model(model_key):
     local_path = f"/tmp/{model_key}"
     try:
         s3_client.download_file(R2_BUCKET, model_key, local_path)
-        logger.debug(f"Downloaded {model_key} from R2 to {local_path}")
-        
-        state_dict = torch.load(local_path, map_location=device)
-        model.load_state_dict(state_dict)
-        model = model.to(device)
+        logger.debug(f"Downloaded {model_key} from R2")
+        model = ResNet50().to(device)
+        model.load_state_dict(torch.load(local_path, map_location=device))
         model.eval()
-        logger.info(f"Loaded ResNet model from R2: {model_key}")
-        
+        os.remove(local_path)
         return model
     except ClientError as e:
-        logger.error(f"Failed to download {model_key} from R2: {str(e)}")
+        logger.error(f"R2 error for {model_key}: {e}")
         return None
-    except Exception as e:
-        logger.error(f"Failed to load model from R2 {model_key}: {str(e)}")
-        return None
-    finally:
-        if os.path.exists(local_path):
-            os.remove(local_path)  # Clean up
 
-# Simplified Grad-CAM
-def generate_gradcam(model, image_tensor, disease, predicted_class):
+def predict(model, image, disease):
+    tensor = Transforms.apply(image).unsqueeze(0).to(device)
     with torch.no_grad():
-        features = None
-        def hook(module, input, output):
-            nonlocal features
-            features = output
-        handle = model.layer4.register_forward_hook(hook)
-        output = model(image_tensor)
-        handle.remove()
+        output = model(tensor)
+        _, pred = torch.max(output, 1)
+        prob = output[0][pred].item()
+    return class_names[disease][pred.item()], prob, tensor
 
-        target_class = class_names[disease].index(predicted_class)
-        score = output[0, target_class]
-        grads = torch.autograd.grad(score, features, retain_graph=False)[0]
-        pooled_grads = torch.mean(grads, dim=[2, 3], keepdim=True)
-        heatmap = torch.mean(features * pooled_grads, dim=1).squeeze().cpu().numpy()
-        heatmap = np.maximum(heatmap, 0)
-        heatmap /= np.max(heatmap) + 1e-10
-
-        img_np = image_tensor.squeeze().cpu().numpy().transpose(1, 2, 0)
-        if img_np.max() <= 1:
-            img_np *= 255
-        img_np = img_np.astype(np.uint8)
-
-        heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
-        heatmap = np.uint8(255 * heatmap)
-        heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-        superimposed_img = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
-
-        gradcam_filename = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
-        os.makedirs("static/gradcam", exist_ok=True)
-        cv2.imwrite(gradcam_filename, superimposed_img)
-
-        del features, grads, pooled_grads, heatmap
-        gc.collect()
-        return gradcam_filename
-
-# Prediction
-def predict_resnet_image(model, image, transform, disease):
-    image_tensor = transform(image).unsqueeze(0).to(device)
-    with torch.no_grad():
-        output = model(image_tensor)
-        _, predicted = torch.max(output, 1)
-        probability = output[0][predicted].item()
-    predicted_class = class_names[disease][predicted.item()]
-    return predicted_class, probability, image_tensor
+def generate_gradcam(model, tensor, disease, pred_class):
+    features = None
+    def hook(module, input, output): nonlocal features; features = output
+    handle = model.layer4.register_forward_hook(hook)
+    output = model(tensor)
+    handle.remove()
+    score = output[0, class_names[disease].index(pred_class)]
+    grads = torch.autograd.grad(score, features)[0]
+    heatmap = torch.mean(features * torch.mean(grads, dim=[2, 3], keepdim=True), dim=1).squeeze().cpu().numpy()
+    heatmap = np.maximum(heatmap, 0) / (np.max(heatmap) + 1e-10)
+    img_np = (tensor.squeeze().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+    heatmap = cv2.resize(np.uint8(255 * heatmap), (224, 224))
+    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    superimposed = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
+    path = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
+    os.makedirs("static/gradcam", exist_ok=True)
+    cv2.imwrite(path, superimposed)
+    return path
 
 # Routes
 @app.route('/')
@@ -265,9 +170,9 @@ def send_static(path):
 def login():
     token = request.json.get('idToken')
     try:
-        decoded_token = auth.verify_id_token(token)
+        decoded = auth.verify_id_token(token)
         session['logged_in'] = True
-        session['uid'] = decoded_token['uid']
+        session['uid'] = decoded['uid']
         return jsonify({'success': True, 'redirect': '/dashboard'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 401
@@ -278,31 +183,25 @@ def analyze():
         image = request.files['image']
         scan_type = request.form['type']
         disease = request.form['disease']
-        logger.debug(f"Analyze request: type={scan_type}, disease={disease}")
+        logger.debug(f"Analyze: type={scan_type}, disease={disease}")
 
-        if scan_type != 'xray':
-            return jsonify({'message': "<p><strong>Error:</strong> Only X-ray scans are supported.</p>"})
-
-        if disease not in ['pneumonia', 'tuberculosis']:
-            return jsonify({'message': "<p><strong>Error:</strong> Only pneumonia and tuberculosis analysis are supported.</p>"})
+        if scan_type != 'xray' or disease not in xray_models:
+            return jsonify({'message': "<p><strong>Error:</strong> Invalid scan type or disease</p>"})
 
         img = Image.open(image)
-        model_key = xray_models.get(disease)
-        model = load_resnet_model(model_key, 2)
-        if model:
-            predicted_class, probability, image_tensor = predict_resnet_image(model, img, transform, disease)
-            gradcam_path = generate_gradcam(model, image_tensor, disease, predicted_class)
-            message = f"<p><strong>Predicted Condition:</strong> {predicted_class}</p><p><strong>Confidence:</strong> {probability:.4f}</p>"
-            del model, image_tensor
-            gc.collect()
-            return jsonify({'message': message, 'gradcam_url': f"/{gradcam_path}"})
-        else:
-            message = f"<p><strong>Status:</strong> {disease.replace('_', ' ').title()} model failed to load.</p>"
-            return jsonify({'message': message})
+        model = load_model(xray_models[disease])
+        if not model:
+            return jsonify({'message': f"<p><strong>Error:</strong> Failed to load {disease} model</p>"})
 
+        pred_class, prob, tensor = predict(model, img, disease)
+        gradcam_path = generate_gradcam(model, tensor, disease, pred_class)
+        return jsonify({
+            'message': f"<p><strong>Predicted:</strong> {pred_class}</p><p><strong>Confidence:</strong> {prob:.4f}</p>",
+            'gradcam_url': f"/{gradcam_path}"
+        })
     except Exception as e:
-        logger.error(f"Error in analyze: {str(e)}")
-        return jsonify({'message': f"<p><strong>Error:</strong> Server error: {str(e)}</p>"})
+        logger.error(f"Analyze error: {e}")
+        return jsonify({'message': f"<p><strong>Error:</strong> {e}</p>"})
 
 @app.route('/health')
 def health():
@@ -310,4 +209,4 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)
