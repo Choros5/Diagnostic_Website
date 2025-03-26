@@ -10,11 +10,14 @@ import uuid
 import firebase_admin
 from firebase_admin import credentials, auth
 import json
+import gc
+import boto3
+from botocore.client import Config
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'
 
-# Define transforms first
+# Define transforms
 class transforms:
     class Compose:
         def __init__(self, transforms):
@@ -60,7 +63,22 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-# Manual ResNet50 definition
+# R2 Configuration
+R2_ACCOUNT_ID = 'your-account-id'  # e.g., d4f5e6...
+R2_ACCESS_KEY = 'your-access-key'  # From API token or R2 settings
+R2_SECRET_KEY = 'your-secret-key'  # From API token or R2 settings
+R2_BUCKET = 'diagnostic-models'
+R2_ENDPOINT = f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com'
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=R2_ACCESS_KEY,
+    aws_secret_access_key=R2_SECRET_KEY,
+    endpoint_url=R2_ENDPOINT,
+    config=Config(signature_version='s3v4')
+)
+
+# Manual ResNet50
 class ResNet50(nn.Module):
     def __init__(self, num_classes=2):
         super(ResNet50, self).__init__()
@@ -68,12 +86,10 @@ class ResNet50(nn.Module):
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
         self.layer1 = self._make_layer(64, 64, 3)
         self.layer2 = self._make_layer(256, 128, 4, stride=2)
         self.layer3 = self._make_layer(512, 256, 6, stride=2)
         self.layer4 = self._make_layer(1024, 512, 3, stride=2)
-
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Sequential(
             nn.Linear(2048, num_classes),
@@ -134,10 +150,10 @@ class Bottleneck(nn.Module):
         out = self.relu(out)
         return out
 
-# Model paths
+# Model paths in R2
 xray_models = {
-    'pneumonia': "models/Pneumonia.pth",
-    'tuberculosis': "models/Tuberculosis_model.pth",
+    'pneumonia': 'Pneumonia.pth',
+    'tuberculosis': 'Tuberculosis_model.pth',
 }
 
 # Class names
@@ -146,82 +162,64 @@ class_names = {
     'tuberculosis': ['Normal', 'Tuberculosis'],
 }
 
-# Load ResNet model
-def load_resnet_model(model_path, num_classes):
+# Load ResNet model from R2
+def load_resnet_model(model_key, num_classes):
     model = ResNet50(num_classes)
-    if os.path.exists(model_path):
-        try:
-            state_dict = torch.load(model_path, map_location=device)
-            model.load_state_dict(state_dict)
-            model = model.to(device)
-            model.eval()
-            logger.info(f"Loaded ResNet model from {model_path}")
-            return model
-        except Exception as e:
-            logger.error(f"Failed to load model from {model_path}: {str(e)}")
-            return None
-    logger.warning(f"Model file not found: {model_path}")
-    return None
+    local_path = f"/tmp/{model_key}"
+    try:
+        s3_client.download_file(R2_BUCKET, model_key, local_path)
+        logger.debug(f"Downloaded {model_key} from R2 to {local_path}")
+        
+        state_dict = torch.load(local_path, map_location=device)
+        model.load_state_dict(state_dict)
+        model = model.to(device)
+        model.eval()
+        logger.info(f"Loaded ResNet model from R2: {model_key}")
+        
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load model from R2 {model_key}: {str(e)}")
+        return None
+    finally:
+        if os.path.exists(local_path):
+            os.remove(local_path)  # Clean up
 
-# Grad-CAM
-class GradCAM:
-    def __init__(self, model, target_layer):
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.features = None
+# Simplified Grad-CAM
+def generate_gradcam(model, image_tensor, disease, predicted_class):
+    with torch.no_grad():
+        features = None
+        def hook(module, input, output):
+            nonlocal features
+            features = output
+        handle = model.layer4.register_forward_hook(hook)
+        output = model(image_tensor)
+        handle.remove()
 
-    def save_gradient(self, grad):
-        self.gradients = grad
+        target_class = class_names[disease].index(predicted_class)
+        score = output[0, target_class]
+        grads = torch.autograd.grad(score, features, retain_graph=False)[0]
+        pooled_grads = torch.mean(grads, dim=[2, 3], keepdim=True)
+        heatmap = torch.mean(features * pooled_grads, dim=1).squeeze().cpu().numpy()
+        heatmap = np.maximum(heatmap, 0)
+        heatmap /= np.max(heatmap) + 1e-10
 
-    def hook_features(self, module, input, output):
-        self.features = output
+        img_np = image_tensor.squeeze().cpu().numpy().transpose(1, 2, 0)
+        if img_np.max() <= 1:
+            img_np *= 255
+        img_np = img_np.astype(np.uint8)
 
-    def __call__(self, x, target_class):
-        self.model.zero_grad()
-        for name, module in self.model.named_modules():
-            if name == self.target_layer:
-                module.register_forward_hook(self.hook_features)
-                module.register_backward_hook(lambda m, gi, go: self.save_gradient(go[0]))
-        output = self.model(x)
-        one_hot = torch.zeros_like(output)
-        one_hot[0, target_class] = 1
-        output.backward(gradient=one_hot.to(device))
-        return output
+        heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
+        heatmap = np.uint8(255 * heatmap)
+        heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        superimposed_img = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
 
-def generate_gradcam(model, image_tensor, disease, predicted_class, target_layer):
-    grad_cam = GradCAM(model, target_layer)
-    target_class = class_names[disease].index(predicted_class)
-    output = grad_cam(image_tensor, target_class)
+        gradcam_filename = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
+        os.makedirs("static/gradcam", exist_ok=True)
+        cv2.imwrite(gradcam_filename, superimposed_img)
 
-    gradients = grad_cam.gradients
-    pooled_gradients = torch.mean(gradients, dim=[2, 3], keepdim=True)
-    features = grad_cam.features
-
-    heatmap = features * pooled_gradients
-    heatmap = torch.mean(heatmap, dim=1).squeeze().cpu().detach().numpy()
-    heatmap = np.maximum(heatmap, 0)
-    heatmap /= np.max(heatmap) + 1e-10
-
-    img_np = image_tensor.squeeze().cpu().numpy()
-    if len(img_np.shape) == 3 and img_np.shape[0] == 3:
-        img_np = np.transpose(img_np, (1, 2, 0))
-    else:
-        raise ValueError(f"Unexpected image tensor shape: {img_np.shape}")
-
-    heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
-    heatmap = np.uint8(255 * heatmap)
-    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-    if img_np.max() <= 1:
-        img_np = img_np * 255
-    img_np = img_np.astype(np.uint8)
-    superimposed_img = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
-
-    gradcam_filename = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
-    os.makedirs("static/gradcam", exist_ok=True)
-    cv2.imwrite(gradcam_filename, superimposed_img)
-    return gradcam_filename
+        del features, grads, pooled_grads, heatmap
+        gc.collect()
+        return gradcam_filename
 
 # Prediction
 def predict_resnet_image(model, image, transform, disease):
@@ -278,12 +276,14 @@ def analyze():
             return jsonify({'message': "<p><strong>Error:</strong> Only pneumonia and tuberculosis analysis are supported.</p>"})
 
         img = Image.open(image)
-        model_path = xray_models.get(disease)
-        model = load_resnet_model(model_path, 2)
+        model_key = xray_models.get(disease)
+        model = load_resnet_model(model_key, 2)
         if model:
             predicted_class, probability, image_tensor = predict_resnet_image(model, img, transform, disease)
-            gradcam_path = generate_gradcam(model, image_tensor, disease, predicted_class, 'layer4')
+            gradcam_path = generate_gradcam(model, image_tensor, disease, predicted_class)
             message = f"<p><strong>Predicted Condition:</strong> {predicted_class}</p><p><strong>Confidence:</strong> {probability:.4f}</p>"
+            del model, image_tensor
+            gc.collect()
             return jsonify({'message': message, 'gradcam_url': f"/{gradcam_path}"})
         else:
             message = f"<p><strong>Status:</strong> {disease.replace('_', ' ').title()} model failed to load.</p>"
