@@ -9,6 +9,7 @@ import numpy as np
 import uuid
 import firebase_admin
 from firebase_admin import credentials, auth
+import json  # Added missing import
 import boto3
 from botocore.exceptions import ClientError
 
