@@ -7,9 +7,9 @@ import logging
 import cv2
 import numpy as np
 import uuid
+import json
 import firebase_admin
 from firebase_admin import credentials, auth
-import json  # Added missing import
 import boto3
 from botocore.exceptions import ClientError
 
@@ -43,7 +43,8 @@ cred = credentials.Certificate(json.loads(firebase_creds))
 firebase_admin.initialize_app(cred)
 
 # R2 setup
-R2_ENDPOINT = f"https://{os.environ.get('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com"
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
+R2_ENDPOINT = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 R2_BUCKET = "diagnostic-models"
 s3_client = boto3.client(
     "s3",
@@ -51,6 +52,14 @@ s3_client = boto3.client(
     aws_secret_access_key=os.environ.get("R2_SECRET_KEY"),
     endpoint_url=R2_ENDPOINT
 )
+
+# Verify R2 at startup
+try:
+    s3_client.head_bucket(Bucket=R2_BUCKET)
+    logger.info(f"Bucket {R2_BUCKET} exists and is accessible")
+except ClientError as e:
+    logger.error(f"Bucket check failed for {R2_BUCKET}: {e}")
+    raise
 
 # Simplified ResNet50
 class ResNet50(nn.Module):
@@ -110,6 +119,9 @@ class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", 
 def load_model(model_key):
     local_path = f"/tmp/{model_key}"
     try:
+        # Check object exists first
+        s3_client.head_object(Bucket=R2_BUCKET, Key=model_key)
+        logger.debug(f"Confirmed {model_key} exists in {R2_BUCKET}")
         s3_client.download_file(R2_BUCKET, model_key, local_path)
         logger.debug(f"Downloaded {model_key} from R2")
         model = ResNet50().to(device)
