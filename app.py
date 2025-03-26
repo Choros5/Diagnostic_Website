@@ -53,13 +53,12 @@ s3_client = boto3.client(
     endpoint_url=R2_ENDPOINT
 )
 
-# Verify R2 at startup
+# Check R2 at startup (non-blocking)
 try:
     s3_client.head_bucket(Bucket=R2_BUCKET)
     logger.info(f"Bucket {R2_BUCKET} exists and is accessible")
 except ClientError as e:
-    logger.error(f"Bucket check failed for {R2_BUCKET}: {e}")
-    raise
+    logger.warning(f"Bucket check failed for {R2_BUCKET}: {e} - Proceeding anyway")
 
 # Simplified ResNet50
 class ResNet50(nn.Module):
@@ -119,7 +118,6 @@ class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", 
 def load_model(model_key):
     local_path = f"/tmp/{model_key}"
     try:
-        # Check object exists first
         s3_client.head_object(Bucket=R2_BUCKET, Key=model_key)
         logger.debug(f"Confirmed {model_key} exists in {R2_BUCKET}")
         s3_client.download_file(R2_BUCKET, model_key, local_path)
@@ -219,6 +217,15 @@ def analyze():
 @app.route('/health')
 def health():
     return "OK", 200
+
+@app.route('/debug/r2', methods=['GET'])
+def debug_r2():
+    try:
+        response = s3_client.list_buckets()
+        buckets = [bucket['Name'] for bucket in response.get('Buckets', [])]
+        return jsonify({'buckets': buckets, 'endpoint': R2_ENDPOINT})
+    except ClientError as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
