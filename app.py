@@ -13,6 +13,7 @@ import json
 import gc
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'
@@ -64,18 +65,25 @@ transform = transforms.Compose([
 ])
 
 # R2 Configuration
-R2_ACCOUNT_ID = 'your-account-id'  # e.g., d4f5e6...
-R2_ACCESS_KEY = 'your-access-key'  # From API token or R2 settings
-R2_SECRET_KEY = 'your-secret-key'  # From API token or R2 settings
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
+R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
+R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
 R2_BUCKET = 'diagnostic-models'
 R2_ENDPOINT = f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com'
+
+if not all([R2_ACCOUNT_ID, R2_ACCESS_KEY, R2_SECRET_KEY]):
+    raise ValueError("R2 credentials not fully set in environment variables")
 
 s3_client = boto3.client(
     's3',
     aws_access_key_id=R2_ACCESS_KEY,
     aws_secret_access_key=R2_SECRET_KEY,
     endpoint_url=R2_ENDPOINT,
-    config=Config(signature_version='s3v4')
+    config=Config(
+        signature_version='s3v4',
+        retries={'max_attempts': 5, 'mode': 'standard'},
+        s3={'addressing_style': 'path'}
+    )
 )
 
 # Manual ResNet50
@@ -177,6 +185,9 @@ def load_resnet_model(model_key, num_classes):
         logger.info(f"Loaded ResNet model from R2: {model_key}")
         
         return model
+    except ClientError as e:
+        logger.error(f"Failed to download {model_key} from R2: {str(e)}")
+        return None
     except Exception as e:
         logger.error(f"Failed to load model from R2 {model_key}: {str(e)}")
         return None
