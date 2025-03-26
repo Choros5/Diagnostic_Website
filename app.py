@@ -80,10 +80,19 @@ try:
 except ClientError as e:
     logger.warning(f"Bucket check failed for {R2_BUCKET}: {e} - Proceeding anyway")
 
+# Model definitions
 xray_models = {"pneumonia": "Pneumonia.pth", "tuberculosis": "Tuberculosis_model.pth"}
 class_names = {"pneumonia": ["Normal", "Pneumonia"], "tuberculosis": ["Normal", "Tuberculosis"]}
 
+# Global model cache
+MODEL_CACHE = {}
+
 def load_model(model_key):
+    """Load model from R2 and cache it, only called at startup."""
+    if model_key in MODEL_CACHE:
+        logger.debug(f"Using cached model for {model_key}")
+        return MODEL_CACHE[model_key]
+    
     local_path = f"/tmp/{model_key}"
     try:
         s3_client.head_object(Bucket=R2_BUCKET, Key=model_key)
@@ -103,10 +112,21 @@ def load_model(model_key):
         model.eval()
         os.remove(local_path)
         logger.debug(f"Loaded and evaluated {model_key}")
+        
+        MODEL_CACHE[model_key] = model
         return model
     except Exception as e:
         logger.error(f"Model loading error for {model_key}: {e}")
         return None
+
+# Load models at startup
+for disease, model_key in xray_models.items():
+    logger.info(f"Pre-loading model for {disease}")
+    model = load_model(model_key)
+    if not model:
+        logger.error(f"Failed to pre-load {model_key}. App may fail on requests for {disease}.")
+    else:
+        logger.info(f"Successfully pre-loaded {model_key}")
 
 def predict(model, image, disease):
     try:
@@ -173,9 +193,9 @@ def analyze():
             return jsonify({'message': "<p><strong>Error:</strong> Invalid scan type or disease</p>"}), 400
 
         img = Image.open(image)
-        model = load_model(xray_models[disease])
+        model = load_model(xray_models[disease])  # Will use cached model
         if not model:
-            logger.error(f"Model load failed for {disease}")
+            logger.error(f"Model not available for {disease}")
             return jsonify({'message': f"<p><strong>Error:</strong> Failed to load {disease} model</p>"}), 500
 
         pred_class, prob = predict(model, img, disease)
