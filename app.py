@@ -5,9 +5,7 @@ import torch.nn as nn
 from torchvision import models
 from PIL import Image
 import logging
-import cv2
 import numpy as np
-import uuid
 import json
 import firebase_admin
 from firebase_admin import credentials, auth
@@ -96,47 +94,7 @@ def predict(model, image, disease):
         _, pred = torch.max(output, 1)
         prob = output[0][pred].item()
     logger.debug(f"Prediction completed: {class_names[disease][pred.item()]}")
-    return class_names[disease][pred.item()], prob, tensor
-
-def generate_gradcam(model, tensor, disease, pred_class):
-    logger.debug("Starting Grad-CAM")
-    model.eval()
-    features = None
-    gradients = None
-    
-    def save_features(module, input, output): nonlocal features; features = output
-    def save_gradients(module, grad_in, grad_out): nonlocal gradients; gradients = grad_out[0]
-    
-    target_layer = model.layer4
-    target_layer.register_forward_hook(save_features)
-    target_layer.register_backward_hook(save_gradients)
-    
-    tensor.requires_grad = True
-    output = model(tensor)
-    score = output[0, class_names[disease].index(pred_class)]
-    model.zero_grad()
-    score.backward()
-    
-    weights = torch.mean(gradients, dim=[2, 3])[0]
-    cam = torch.zeros(tensor.shape[2:], dtype=torch.float32).to(device)
-    for i, w in enumerate(weights):
-        cam += w * features[0, i]
-    
-    cam = torch.relu(cam)
-    cam = cam / (cam.max() + 1e-10)
-    logger.debug("Grad-CAM heatmap computed")
-    
-    cam = cam.cpu().numpy()
-    cam = cv2.resize(cam, (224, 224))
-    img_np = (tensor.squeeze().detach().cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-    heatmap_color = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)
-    superimposed = cv2.addWeighted(img_np, 0.6, heatmap_color, 0.4, 0)
-    
-    path = f"static/gradcam/heatmap_{uuid.uuid4().hex}.png"
-    os.makedirs("static/gradcam", exist_ok=True)
-    cv2.imwrite(path, superimposed)
-    logger.debug(f"Grad-CAM saved to {path}")
-    return path
+    return class_names[disease][pred.item()], prob
 
 @app.route('/')
 def home():
@@ -183,11 +141,9 @@ def analyze():
         if not model:
             return jsonify({'message': f"<p><strong>Error:</strong> Failed to load {disease} model</p>"})
 
-        pred_class, prob, tensor = predict(model, img, disease)
-        gradcam_path = generate_gradcam(model, tensor, disease, pred_class)
+        pred_class, prob = predict(model, img, disease)
         return jsonify({
-            'message': f"<p><strong>Predicted:</strong> {pred_class}</p><p><strong>Confidence:</strong> {prob:.4f}</p>",
-            'gradcam_url': f"/{gradcam_path}"
+            'message': f"<p><strong>Predicted:</strong> {pred_class}</p><p><strong>Confidence:</strong> {prob:.4f}</p>"
         })
     except Exception as e:
         logger.error(f"Analyze error: {e}")
